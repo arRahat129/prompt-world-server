@@ -32,8 +32,14 @@ async function run() {
         await client.connect();
 
         const database = client.db("prompt_world_db");
+        const userCollection = database.collection("user");
         const promptCollection = database.collection("prompts");
 
+
+        app.get('/api/user', async(req, res) => {
+            const result = await userCollection.find().toArray();
+            res.send(result);
+        })
 
         app.get('/api/prompts', async(req, res) => {
             const query = {};
@@ -44,6 +50,27 @@ async function run() {
                 query.status = req.query.status;
             }
 
+            if (req.query.search) {
+                query.title = {
+                    $regex: req.query.search,
+                    $options: 'i', 
+                };
+            }
+
+            if (req.query.category) {
+                query.category = { 
+                    $in: req.query.category.split(',') 
+                };
+            }
+
+            if (req.query.aiTool) {
+                query.aiTool = req.query.aiTool;
+            }
+
+            if (req.query.difficulty) {
+                query.difficulty = req.query.difficulty;
+            }
+
             const cursor = promptCollection.find(query);
             const result = await cursor.toArray();
             res.send(result);
@@ -51,7 +78,11 @@ async function run() {
 
         app.post('/api/prompts', async (req, res) => {
             const prompt = req.body;
-            const result = await promptCollection.insertOne(prompt);
+            const newPrompt = {
+                ...prompt,
+                createdAt: new Date()
+            }
+            const result = await promptCollection.insertOne(newPrompt);
             res.send(result);
         })
 
