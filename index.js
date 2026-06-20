@@ -97,6 +97,29 @@ async function run() {
         })
 
         // reviews
+        app.get('/api/reviews', async (req, res) => {
+            try {
+                const { promptId } = req.query;
+
+                if (!promptId) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Missing required query parameter: promptId"
+                    });
+                }
+
+                const query = { promptId: promptId };
+
+                const reviews = await reviewCollection.find(query).sort({ createdAt: -1 }).toArray();
+
+                res.status(200).send(reviews);
+            } catch (error) {
+                console.error("Error retrieving reviews collection data:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+
         app.post('/api/reviews', async (req, res) => {
             try {
                 const reviewData = req.body;
@@ -127,6 +150,40 @@ async function run() {
 
             } catch (error) {
                 console.error("Error creating document inside reviewCollection:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        app.patch('/api/reviews', async (req, res) => {
+            try {
+                const { promptId, reviewerId, rating, comment } = req.body;
+
+                if (!promptId || !reviewerId) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Missing identifiers (promptId or reviewerId)."
+                    });
+                }
+
+                const queryFilter = { promptId, reviewerId };
+
+                const updatePayload = {
+                    $set: {
+                        rating: Number(rating),
+                        comment: comment,
+                        createdAt: new Date()
+                    }
+                };
+
+                const result = await reviewCollection.updateOne(queryFilter, updatePayload);
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ success: false, message: "No matching review found to update." });
+                }
+
+                res.status(200).send({ success: true, message: "Your review has been updated successfully!" });
+            } catch (error) {
+                console.error("PATCH Error:", error);
                 res.status(500).send({ success: false, message: "Internal Server Error" });
             }
         });
