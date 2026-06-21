@@ -190,9 +190,41 @@ async function run() {
         });
 
         // Bookmarks
+        app.get('/api/bookmarks', async (req, res) => {
+            try {
+                const { email, userId } = req.query;
+                console.log(email, userId);
+
+                if (!email && !userId) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Missing filtering identifier query params (email, or userId..)"
+                    });
+                }
+
+                const query = {};
+                if (email) {
+                    query.userEmail = email;
+                }
+
+                if (userId) {
+                    query.userId = userId;
+                }
+
+                const bookmarks = await bookmarkCollection.find(query).sort({ createdAt: -1 }).toArray();
+                console.log(bookmarks);
+                res.status(200).send(bookmarks);
+            }
+            catch (error) {
+                console.log("Error retrieving user bookmarks list layout:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+
         app.post('/api/bookmarks', async (req, res) => {
             try {
-                const { promptId, promptTitle, userId, userEmail } = req.body;
+                const { promptId, promptTitle, promptDescription, userId, userEmail, creatorName, creatorEmail } = req.body;
 
                 if (!promptId || !userId) {
                     return res.status(400).send({ success: false, message: "Missing required identifier fields." });
@@ -210,8 +242,11 @@ async function run() {
                     const newBookmark = {
                         promptId,
                         promptTitle,
+                        promptDescription: promptDescription || "",
                         userId,
                         userEmail,
+                        creatorName: creatorName || "Anonymous Creator",
+                        creatorEmail: creatorEmail || "",
                         createdAt: new Date()
                     };
                     const result = await bookmarkCollection.insertOne(newBookmark);
