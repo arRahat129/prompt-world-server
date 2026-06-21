@@ -120,6 +120,37 @@ async function run() {
             }
         });
 
+        app.get('/api/reviews/user/:reviewerId', async (req, res) => {
+            try {
+                const { reviewerId } = req.params;
+
+                if (!reviewerId) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Missing required parameter: reviewerId"
+                    });
+                }
+
+                const query = { reviewerId: reviewerId };
+
+                // Retrieves the user's reviews sorted from newest to oldest
+                const userReviews = await reviewCollection
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.status(200).send({
+                    success: true,
+                    count: userReviews.length,
+                    data: userReviews
+                });
+            } catch (error) {
+                console.error("Error retrieving user-specific reviews:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+        
+
 
         app.post('/api/reviews', async (req, res) => {
             try {
@@ -219,8 +250,8 @@ async function run() {
         // });
 
         // Bookmarks
-        
-        
+
+
         app.get('/api/bookmarks', async (req, res) => {
             try {
                 const { email, userId } = req.query;
