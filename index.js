@@ -156,16 +156,16 @@ async function run() {
 
         app.patch('/api/reviews', async (req, res) => {
             try {
-                const { promptId, reviewerId, rating, comment } = req.body;
+                const { reviewerId, rating, comment } = req.body;
 
-                if (!promptId || !reviewerId) {
+                if (!reviewerId) {
                     return res.status(400).send({
                         success: false,
                         message: "Missing identifiers (promptId or reviewerId)."
                     });
                 }
 
-                const queryFilter = { promptId, reviewerId };
+                const queryFilter = { _id: new ObjectId(reviewerId) };
 
                 const updatePayload = {
                     $set: {
