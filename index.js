@@ -125,71 +125,102 @@ async function run() {
             try {
                 const reviewData = req.body;
 
-                if (!reviewData.promptId || !reviewData.rating || !reviewData.comment) {
+                if (!reviewData.promptId || !reviewData.reviewerId || !reviewData.rating || !reviewData.comment) {
                     return res.status(400).send({
                         success: false,
-                        message: "Missing required parameters (promptId, rating, or comment)."
+                        message: "Missing required parameters (promptId, reviewerId, rating, or comment)."
                     });
                 }
 
-                const newReview = {
+                const existingReview = await reviewCollection.findOne({
                     promptId: reviewData.promptId,
-                    rating: Number(reviewData.rating),
-                    comment: reviewData.comment,
-                    reviewerId: reviewData.reviewerId,
-                    reviewerName: reviewData.reviewerName,
-                    reviewerImage: reviewData.reviewerImage,
-                    createdAt: new Date()
-                };
-
-                const result = await reviewCollection.insertOne(newReview);
-                res.status(200).send({
-                    success: true,
-                    insertedId: result.insertedId,
-                    message: "Review submitted successfully!"
+                    reviewerId: reviewData.reviewerId
                 });
 
-            } catch (error) {
-                console.error("Error creating document inside reviewCollection:", error);
-                res.status(500).send({ success: false, message: "Internal Server Error" });
-            }
-        });
+                if (existingReview) {
+                    // 2. If it exists, update it using its unique review _id
+                    const queryFilter = { _id: existingReview._id };
+                    const updatePayload = {
+                        $set: {
+                            rating: Number(reviewData.rating),
+                            comment: reviewData.comment,
+                            createdAt: new Date()
+                        }
+                    };
 
-        app.patch('/api/reviews', async (req, res) => {
-            try {
-                const { reviewerId, rating, comment } = req.body;
+                    await reviewCollection.updateOne(queryFilter, updatePayload);
 
-                if (!reviewerId) {
-                    return res.status(400).send({
-                        success: false,
-                        message: "Missing identifiers (promptId or reviewerId)."
+                    return res.status(200).send({
+                        success: true,
+                        message: "Your existing review has been updated successfully!"
+                    });
+
+                } else {
+                    const newReview = {
+                        promptId: reviewData.promptId,
+                        promptName: reviewData.promptName || "",
+                        promptDescription: reviewData.promptDescription || "",
+                        creatorId: reviewData.creatorId || "",
+                        rating: Number(reviewData.rating),
+                        comment: reviewData.comment,
+                        reviewerId: reviewData.reviewerId,
+                        reviewerName: reviewData.reviewerName,
+                        reviewerImage: reviewData.reviewerImage,
+                        createdAt: new Date()
+                    };
+
+                    const result = await reviewCollection.insertOne(newReview);
+
+                    return res.status(200).send({
+                        success: true,
+                        insertedId: result.insertedId,
+                        message: "Review submitted successfully!"
                     });
                 }
 
-                const queryFilter = { _id: new ObjectId(reviewerId) };
-
-                const updatePayload = {
-                    $set: {
-                        rating: Number(rating),
-                        comment: comment,
-                        createdAt: new Date()
-                    }
-                };
-
-                const result = await reviewCollection.updateOne(queryFilter, updatePayload);
-
-                if (result.matchedCount === 0) {
-                    return res.status(404).send({ success: false, message: "No matching review found to update." });
-                }
-
-                res.status(200).send({ success: true, message: "Your review has been updated successfully!" });
             } catch (error) {
-                console.error("PATCH Error:", error);
+                console.error("Error managing review submission lifecycle:", error);
                 res.status(500).send({ success: false, message: "Internal Server Error" });
             }
         });
 
+        // app.patch('/api/reviews', async (req, res) => {
+        //     try {
+        //         const { reviewerId, rating, comment } = req.body;
+
+        //         if (!reviewerId) {
+        //             return res.status(400).send({
+        //                 success: false,
+        //                 message: "Missing identifiers (promptId or reviewerId)."
+        //             });
+        //         }
+
+        //         const queryFilter = { _id: new ObjectId(reviewerId) };
+
+        //         const updatePayload = {
+        //             $set: {
+        //                 rating: Number(rating),
+        //                 comment: comment,
+        //                 createdAt: new Date()
+        //             }
+        //         };
+
+        //         const result = await reviewCollection.updateOne(queryFilter, updatePayload);
+
+        //         if (result.matchedCount === 0) {
+        //             return res.status(404).send({ success: false, message: "No matching review found to update." });
+        //         }
+
+        //         res.status(200).send({ success: true, message: "Your review has been updated successfully!" });
+        //     } catch (error) {
+        //         console.error("PATCH Error:", error);
+        //         res.status(500).send({ success: false, message: "Internal Server Error" });
+        //     }
+        // });
+
         // Bookmarks
+        
+        
         app.get('/api/bookmarks', async (req, res) => {
             try {
                 const { email, userId } = req.query;
