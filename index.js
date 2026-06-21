@@ -35,6 +35,7 @@ async function run() {
         const userCollection = database.collection("user");
         const promptCollection = database.collection("prompts");
         const reviewCollection = database.collection("reviews");
+        const bookmarkCollection = database.collection("bookmarks");
 
 
         app.get('/api/user', async (req, res) => {
@@ -184,6 +185,46 @@ async function run() {
                 res.status(200).send({ success: true, message: "Your review has been updated successfully!" });
             } catch (error) {
                 console.error("PATCH Error:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        // Bookmarks
+        app.post('/api/bookmarks', async (req, res) => {
+            try {
+                const { promptId, promptTitle, userId, userEmail } = req.body;
+
+                if (!promptId || !userId) {
+                    return res.status(400).send({ success: false, message: "Missing required identifier fields." });
+                }
+
+                const existingBookmark = await bookmarkCollection.findOne({ promptId, userId });
+                if (existingBookmark) {
+                    await bookmarkCollection.deleteOne({ promptId, userId });
+                    return res.status(200).send({
+                        success: true,
+                        isBookmarked: false,
+                        message: "Bookmark removed successfully!"
+                    });
+                } else {
+                    const newBookmark = {
+                        promptId,
+                        promptTitle,
+                        userId,
+                        userEmail,
+                        createdAt: new Date()
+                    };
+                    const result = await bookmarkCollection.insertOne(newBookmark);
+
+                    return res.status(200).send({
+                        success: true,
+                        isBookmarked: true,
+                        result: result,
+                        message: "Prompt bookmarked successfully!"
+                    });
+                }
+            } catch (error) {
+                console.error("Bookmark Database Error:", error);
                 res.status(500).send({ success: false, message: "Internal Server Error" });
             }
         });
