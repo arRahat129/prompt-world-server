@@ -38,6 +38,8 @@ async function run() {
         const bookmarkCollection = database.collection("bookmarks");
         const planCollection = database.collection("plans");
         const paymentCollection = database.collection("payments");
+        const rejectionCollection = database.collection("rejections");
+        const featuredCollection = database.collection("featured_prompts");
 
 
         app.get('/api/user', async (req, res) => {
@@ -98,6 +100,142 @@ async function run() {
             const result = await promptCollection.insertOne(newPrompt);
             res.send(result);
         })
+
+        app.patch('/api/prompts/:id/approve', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const queryFilter = { _id: new ObjectId(id) };
+
+                const updateResult = await promptCollection.updateOne(queryFilter, {
+                    $set: { status: "approved", updatedAt: new Date() }
+                });
+
+                if (updateResult.matchedCount === 0) {
+                    return res.status(404).send({ success: false, message: "Prompt index entry not found." });
+                }
+
+                await rejectionCollection.deleteOne({ promptId: id });
+
+                res.status(200).send({ success: true, message: "Prompt approved; systemic rejection history cleared." });
+            } catch (error) {
+                console.error("Approval Execution Error:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        app.post('/api/prompts/:id/reject', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { feedback } = req.body;
+
+                if (!feedback || !feedback.trim()) {
+                    return res.status(400).send({ success: false, message: "Explicit rejection comment logs required." });
+                }
+
+                const promptQuery = { _id: new ObjectId(id) };
+                const promptData = await promptCollection.findOne(promptQuery);
+
+                if (!promptData) {
+                    return res.status(404).send({ success: false, message: "Prompt asset not found." });
+                }
+
+                await promptCollection.updateOne(promptQuery, {
+                    $set: { status: "rejected", updatedAt: new Date() }
+                });
+
+                const rejectionLog = {
+                    promptId: id,
+                    title: promptData.title,
+                    category: promptData.category,
+                    aiTool: promptData.aiTool,
+                    thumbnail: promptData.thumbnail,
+                    creatorId: promptData.creatorId,
+                    creatorEmail: promptData.creatorEmail,
+                    creatorName: promptData.creatorName,
+                    creatorImage: promptData.creatorImage,
+                    adminFeedback: feedback,
+                    rejectedAt: new Date()
+                };
+
+                await rejectionCollection.updateOne(
+                    { promptId: id },
+                    { $set: rejectionLog },
+                    { upsert: true }
+                );
+
+                res.status(200).send({ success: true, message: "Prompt rejected. Metadata records pushed to rejection logs." });
+            } catch (error) {
+                console.error("Rejection Lifecycle Processing Failure:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        app.post('/api/prompts/:id/feature', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { isFeatured } = req.body; // Expects an explicit boolean variable flag
+
+                const promptQuery = { _id: new ObjectId(id) };
+
+                if (isFeatured) {
+                    const promptData = await promptCollection.findOne(promptQuery);
+                    if (!promptData) {
+                        return res.status(404).send({ success: false, message: "Master prompt index entry not found." });
+                    }
+
+                    const featuredPayload = {
+                        promptId: id,
+                        title: promptData.title,
+                        category: promptData.category,
+                        aiTool: promptData.aiTool,
+                        difficulty: promptData.difficulty,
+                        thumbnail: promptData.thumbnail,
+                        copyCount: promptData.copyCount || 0,
+                        creatorId: promptData.creatorId,
+                        creatorName: promptData.creatorName,
+                        featuredAt: new Date()
+                    };
+
+                    await featuredCollection.updateOne(
+                        { promptId: id },
+                        { $set: featuredPayload },
+                        { upsert: true }
+                    );
+
+                    await promptCollection.updateOne(promptQuery, { $set: { isFeatured: true } });
+
+                } else {
+                    await featuredCollection.deleteOne({ promptId: id });
+                    await promptCollection.updateOne(promptQuery, { $set: { isFeatured: false } });
+                }
+
+                res.status(200).send({ success: true, message: "Featured selection synchronization state updated." });
+            } catch (error) {
+                console.error("Feature Workspace Toggle Operation Failure:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        app.delete('/api/prompts/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const queryFilter = { _id: new ObjectId(id) };
+
+                const result = await promptCollection.deleteOne(queryFilter);
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).send({ success: false, message: "No matching record targets resolved." });
+                }
+
+                await rejectionCollection.deleteOne({ promptId: id });
+                await featuredCollection.deleteOne({ promptId: id });
+
+                res.status(200).send({ success: true, message: "Prompt configurations purged system-wide." });
+            } catch (error) {
+                console.error("System Hard Clean Cascade Execution Failure:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
 
         // reviews
         app.get('/api/reviews', async (req, res) => {
