@@ -36,6 +36,8 @@ async function run() {
         const promptCollection = database.collection("prompts");
         const reviewCollection = database.collection("reviews");
         const bookmarkCollection = database.collection("bookmarks");
+        const planCollection = database.collection("plans");
+        const paymentCollection = database.collection("payments");
 
 
         app.get('/api/user', async (req, res) => {
@@ -149,7 +151,7 @@ async function run() {
                 res.status(500).send({ success: false, message: "Internal Server Error" });
             }
         });
-        
+
 
 
         app.post('/api/reviews', async (req, res) => {
@@ -325,6 +327,53 @@ async function run() {
                 res.status(500).send({ success: false, message: "Internal Server Error" });
             }
         });
+
+
+        // plans
+        app.get('/api/plans', async (req, res) => {
+            try {
+                const query = {};
+
+                if (req.query.plan_id) {
+                    // FIX: Changed query.id to query.plan_id to match your MongoDB documents
+                    query.plan_id = req.query.plan_id;
+                }
+
+                const plan = await planCollection.findOne(query);
+
+                if (!plan) {
+                    return res.status(404).send({ success: false, message: "Plan not found" });
+                }
+
+                res.send(plan);
+            } catch (error) {
+                console.error("Error fetching plan:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
+        // payments
+        app.post('/api/payments', async (req, res) => {
+            const data = req.body;
+            const payInfo = {
+                ...data,
+                createdAt: new Date()
+            }
+
+            const result = await paymentCollection.insertOne(payInfo);
+
+
+            const filter = { email: data.email };
+
+            const updateDocument = {
+                $set: {
+                    plan: data.planId
+                }
+            };
+
+            const updateResult = await userCollection.updateOne(filter, updateDocument);
+            res.send(updateResult);
+        })
 
 
         await client.db("admin").command({ ping: 1 });
