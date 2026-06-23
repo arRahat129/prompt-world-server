@@ -9,6 +9,7 @@ app.use(cors());
 app.use(express.json())
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 
 app.get('/', (req, res) => {
     res.send('Hello World!')
@@ -26,6 +27,84 @@ const client = new MongoClient(uri, {
     }
 });
 
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+
+// VARIFICATION PROCESS
+const verifyToken = async (req, res, next) => {
+    console.log('headers', req.headers);
+    const authHeader = req.headers?.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer")) {
+        return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
+    }
+
+    try {
+        const { payload } = await jwtVerify(token, JWKS);
+        console.log(payload);
+        req.user = payload;
+        next();
+    }
+    catch (error) {
+        console.log(error);
+        return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
+    }
+}
+
+const adminVerify = async (req, res, next) => {
+    const user = req.user;
+    console.log(user);
+
+    if (user?.role !== 'admin') {
+        return res.status(403).json({ success: false, message: "FORBIDDEN: Administrative privileges required." });
+    }
+    next();
+};
+
+const appUsersVerify = async (req, res, next) => {
+    const user = req.user;
+    // console.log("user from seller", user);
+    const allowedRoles = ['user', 'creator'];
+
+    if (!allowedRoles.includes(user?.role)) {
+        return res.status(403).json({ message: "FORBIDDEN: Access restricted to standard platform users." });
+    }
+    next();
+}
+
+const userVerify = async (req, res, next) => {
+    const user = req.user;
+
+    if (user?.role !== 'user') {
+        return res.status(403).json({ success: false, message: "FORBIDDEN: User privileges required." });
+    }
+    next();
+};
+
+const proUserVerify = async (req, res, next) => {
+    const user = req.user;
+
+    if (user?.plan !== 'user_pro') {
+        return res.status(401).json({ success: false, message: "FORBIDDEN: Upgrade to Pro subscription tier required to access this resource." });
+    }
+
+    next();
+}
+
+const creatorVerify = async (req, res, next) => {
+    const user = req.user;
+
+    if (user?.role !== 'creator') {
+        return res.status(403).json({ success: false, message: "FORBIDDEN: Creator privileges required." });
+    }
+    next();
+};
+
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -42,12 +121,13 @@ async function run() {
         const featuredCollection = database.collection("featured_prompts");
 
 
-        app.get('/api/user', async (req, res) => {
+        // USER RELATED API'S
+        app.get('/api/user', verifyToken, adminVerify, async (req, res) => {
             const result = await userCollection.find().toArray();
             res.send(result);
         })
 
-        app.patch('/api/user/:id/role', async (req, res) => {
+        app.patch('/api/user/:id/role', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const { role } = req.body;
@@ -72,7 +152,7 @@ async function run() {
             }
         });
 
-        app.delete('/api/user/:id', async (req, res) => {
+        app.delete('/api/user/:id', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const queryFilter = { _id: new ObjectId(id) };
@@ -132,7 +212,7 @@ async function run() {
             res.send(result);
         })
 
-        app.get('/api/prompts/:id', async (req, res) => {
+        app.get('/api/prompts/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = {
                 _id: new ObjectId(id)
@@ -141,7 +221,7 @@ async function run() {
             res.send(result);
         })
 
-        app.post('/api/prompts', async (req, res) => {
+        app.post('/api/prompts', verifyToken, appUsersVerify, async (req, res) => {
             const prompt = req.body;
             const newPrompt = {
                 ...prompt,
@@ -151,7 +231,7 @@ async function run() {
             res.send(result);
         })
 
-        app.patch('/api/prompts/:id/approve', async (req, res) => {
+        app.patch('/api/prompts/:id/approve', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const queryFilter = { _id: new ObjectId(id) };
@@ -173,7 +253,7 @@ async function run() {
             }
         });
 
-        app.post('/api/prompts/:id/reject', async (req, res) => {
+        app.post('/api/prompts/:id/reject', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const { feedback } = req.body;
@@ -220,7 +300,7 @@ async function run() {
             }
         });
 
-        app.post('/api/prompts/:id/feature', async (req, res) => {
+        app.post('/api/prompts/:id/feature', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const { isFeatured } = req.body; // Expects an explicit boolean variable flag
@@ -266,7 +346,7 @@ async function run() {
             }
         });
 
-        app.delete('/api/prompts/:id', async (req, res) => {
+        app.delete('/api/prompts/:id', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
                 const queryFilter = { _id: new ObjectId(id) };
@@ -288,7 +368,7 @@ async function run() {
         });
 
         // reviews
-        app.get('/api/reviews', async (req, res) => {
+        app.get('/api/reviews', verifyToken, async (req, res) => {
             try {
                 const { promptId } = req.query;
 
@@ -310,7 +390,7 @@ async function run() {
             }
         });
 
-        app.get('/api/reviews/user/:reviewerId', async (req, res) => {
+        app.get('/api/reviews/user/:reviewerId', verifyToken, userVerify, async (req, res) => {
             try {
                 const { reviewerId } = req.params;
 
@@ -342,7 +422,7 @@ async function run() {
 
 
 
-        app.post('/api/reviews', async (req, res) => {
+        app.post('/api/reviews', verifyToken, userVerify, proUserVerify, async (req, res) => {
             try {
                 const reviewData = req.body;
 
@@ -442,7 +522,7 @@ async function run() {
         // Bookmarks
 
 
-        app.get('/api/bookmarks', async (req, res) => {
+        app.get('/api/bookmarks', verifyToken, async (req, res) => {
             try {
                 const { email, userId } = req.query;
                 console.log(email, userId);
@@ -474,7 +554,7 @@ async function run() {
         });
 
 
-        app.post('/api/bookmarks', async (req, res) => {
+        app.post('/api/bookmarks', verifyToken, userVerify, async (req, res) => {
             try {
                 const { promptId, promptTitle, promptDescription, userId, userEmail, creatorName, creatorEmail } = req.body;
 
@@ -518,7 +598,7 @@ async function run() {
 
 
         // plans
-        app.get('/api/plans', async (req, res) => {
+        app.get('/api/plans', verifyToken, async (req, res) => {
             try {
                 const query = {};
 
@@ -541,12 +621,12 @@ async function run() {
         });
 
         // payments
-        app.get('/api/payments', async (req, res) => {
+        app.get('/api/payments', verifyToken, adminVerify, async (req, res) => {
             const result = await paymentCollection.find().toArray();
             res.send(result);
         })
 
-        app.post('/api/payments', async (req, res) => {
+        app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
             const data = req.body;
             const payInfo = {
                 ...data,
