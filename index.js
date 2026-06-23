@@ -357,6 +357,31 @@ async function run() {
             }
         });
 
+        app.patch('/api/prompts/:id/copy', verifyToken, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const queryFilter = { _id: new ObjectId(id) };
+
+                const updateResult = await promptCollection.updateOne(queryFilter, {
+                    $inc: { copyCount: 1 }
+                });
+
+                if (updateResult.matchedCount === 0) {
+                    return res.status(404).send({ success: false, message: "Target prompt entry not found." });
+                }
+
+                await featuredCollection.updateOne(
+                    { promptId: id },
+                    { $inc: { copyCount: 1 } }
+                );
+
+                res.status(200).send({ success: true, message: "Prompt copy metric incremented." });
+            } catch (error) {
+                console.error("Copy Analytics Sync Failure:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
         app.delete('/api/prompts/:id', verifyToken, adminVerify, async (req, res) => {
             try {
                 const id = req.params.id;
