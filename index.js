@@ -39,6 +39,7 @@ const verifyToken = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
+    console.log(token);
 
     if (!token) {
         return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
@@ -46,7 +47,7 @@ const verifyToken = async (req, res, next) => {
 
     try {
         const { payload } = await jwtVerify(token, JWKS);
-        console.log(payload);
+        console.log('payload from verify token', payload);
         req.user = payload;
         next();
     }
@@ -104,6 +105,16 @@ const creatorVerify = async (req, res, next) => {
     }
     next();
 };
+
+const proCreatorVerify = async (req, res, next) => {
+    const user = req.user;
+
+    if (user?.plan !== 'creator_pro') {
+        return res.status(401).json({ success: false, message: "FORBIDDEN: Upgrade to Pro subscription tier required to access this resource." });
+    }
+
+    next();
+}
 
 async function run() {
     try {
@@ -553,10 +564,52 @@ async function run() {
             }
         });
 
+        // Get all bookmarks on a creator's prompts (Flat Data Format)
+        app.get('/api/creator/bookmarks', verifyToken, creatorVerify, async (req, res) => {
+            try {
+                const creatorEmail = req.user?.email;
+
+                if (!creatorEmail) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Invalid token payload: Creator email missing."
+                    });
+                }
+
+                const query = { creatorEmail: creatorEmail };
+
+                const bookmarksOnMyPrompts = await bookmarkCollection
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                const formattedBookmarks = bookmarksOnMyPrompts.map(bookmark => ({
+                    bookmarkId: bookmark._id,
+                    promptId: bookmark.promptId,
+                    promptTitle: bookmark.promptTitle,
+                    promptDescription: bookmark.promptDescription,
+                    bookmarkedByName: bookmark.userName,
+                    bookmarkedByEmail: bookmark.userEmail,
+                    bookmarkedByUserId: bookmark.userId,
+                    date: bookmark.createdAt
+                }));
+
+                res.status(200).send({
+                    success: true,
+                    count: formattedBookmarks.length,
+                    data: formattedBookmarks
+                });
+
+            } catch (error) {
+                console.error("Error retrieving creator prompts analytics:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
 
         app.post('/api/bookmarks', verifyToken, userVerify, async (req, res) => {
             try {
-                const { promptId, promptTitle, promptDescription, userId, userEmail, creatorName, creatorEmail } = req.body;
+                const { promptId, promptTitle, promptDescription, userId, userEmail, userName, creatorName, creatorEmail } = req.body;
 
                 if (!promptId || !userId) {
                     return res.status(400).send({ success: false, message: "Missing required identifier fields." });
@@ -576,6 +629,7 @@ async function run() {
                         promptTitle,
                         promptDescription: promptDescription || "",
                         userId,
+                        userName,
                         userEmail,
                         creatorName: creatorName || "Anonymous Creator",
                         creatorEmail: creatorEmail || "",
