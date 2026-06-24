@@ -560,26 +560,17 @@ async function run() {
 
         app.get('/api/bookmarks', verifyToken, async (req, res) => {
             try {
-                const { email, userId } = req.query;
-                console.log(email, userId);
+                const { userId } = req.query;
+                console.log(userId);
 
-                if (!email && !userId) {
+                if (!userId) {
                     return res.status(400).send({
                         success: false,
-                        message: "Missing filtering identifier query params (email, or userId..)"
+                        message: "Missing filtering identifier query params (userId..)"
                     });
                 }
 
-                const query = {};
-                if (email) {
-                    query.userEmail = email;
-                }
-
-                if (userId) {
-                    query.userId = userId;
-                }
-
-                const bookmarks = await bookmarkCollection.find(query).sort({ createdAt: -1 }).toArray();
+                const bookmarks = await bookmarkCollection.find({ userId }).sort({ createdAt: -1 }).toArray();
                 console.log(bookmarks);
                 res.status(200).send(bookmarks);
             }
@@ -592,21 +583,13 @@ async function run() {
         // Get all bookmarks on a creator's prompts (Flat Data Format)
         app.get('/api/creator/bookmarks', verifyToken, creatorVerify, async (req, res) => {
             try {
-                const creatorEmail = req.user?.email;
+                const creatorId = req.user?.id || req.user?._id;
 
-                if (!creatorEmail) {
-                    return res.status(400).send({
-                        success: false,
-                        message: "Invalid token payload: Creator email missing."
-                    });
+                if (!creatorId) {
+                    return res.status(400).send({ success: false, message: "Invalid creator token verification structural payload." });
                 }
 
-                const query = { creatorEmail: creatorEmail };
-
-                const bookmarksOnMyPrompts = await bookmarkCollection
-                    .find(query)
-                    .sort({ createdAt: -1 })
-                    .toArray();
+                const bookmarksOnMyPrompts = await bookmarkCollection.find({ creatorId }).sort({ createdAt: -1 }).toArray();
 
                 const formattedBookmarks = bookmarksOnMyPrompts.map(bookmark => ({
                     bookmarkId: bookmark._id,
@@ -634,7 +617,7 @@ async function run() {
 
         app.post('/api/bookmarks', verifyToken, userVerify, async (req, res) => {
             try {
-                const { promptId, promptTitle, promptDescription, userId, userEmail, userName, creatorName, creatorEmail } = req.body;
+                const { promptId, promptTitle, promptDescription, userId, userEmail, userName, creatorId, creatorName, creatorEmail } = req.body;
 
                 if (!promptId || !userId) {
                     return res.status(400).send({ success: false, message: "Missing required identifier fields." });
@@ -656,6 +639,7 @@ async function run() {
                         userId,
                         userName,
                         userEmail,
+                        creatorId: creatorId,
                         creatorName: creatorName || "Anonymous Creator",
                         creatorEmail: creatorEmail || "",
                         createdAt: new Date()
@@ -726,6 +710,87 @@ async function run() {
             const updateResult = await userCollection.updateOne(filter, updateDocument);
             res.send(updateResult);
         })
+
+        // CREATOR ANALYTICS
+        app.get('/api/creator/analytics', verifyToken, creatorVerify, async (req, res) => {
+            try {
+                const creatorId = req.user?.id || req.user?._id;
+
+                if (!creatorId) {
+                    return res.status(400).send({ success: false, message: "Invalid token payload" });
+                }
+
+                // 1. Fetch Raw Aggregate Values
+                const totalPrompts = await promptCollection.countDocuments({ creatorId });
+                const approvedPrompts = await promptCollection.countDocuments({ creatorId, status: "approved" });
+                const pendingPrompts = await promptCollection.countDocuments({ creatorId, status: "pending" });
+                const totalBookmarks = await bookmarkCollection.countDocuments({ creatorId });
+
+                const copiesResult = await promptCollection.aggregate([
+                    { $match: { creatorId } },
+                    { $group: { _id: null, totalCopies: { $sum: { $ifNull: ["$copyCount", 0] } } } }
+                ]).toArray();
+                const totalCopies = copiesResult[0]?.totalCopies || 0;
+
+                // 2. Format exact 5-Bar Summary Array for the chart
+                const summaryBars = [
+                    { name: 'Total Prompts', value: totalPrompts, fillKey: 'url(#barTotalPromptsGrad)' },
+                    { name: 'Approved Status', value: approvedPrompts, fillKey: 'url(#barApprovedGrad)' },
+                    { name: 'Pending Status', value: pendingPrompts, fillKey: 'url(#barPendingGrad)' },
+                    { name: 'Total Copies', value: totalCopies, fillKey: 'url(#barCopiesGrad)' },
+                    { name: 'Total Bookmarks', value: totalBookmarks, fillKey: 'url(#barBookmarksGrad)' }
+                ];
+
+                // 3. Growth Timeline Data (Remains intact per your requirement)
+                const [growthData] = await promptCollection.aggregate([
+                    { $match: { creatorId } },
+                    {
+                        $facet: {
+                            promptGrowth: [
+                                {
+                                    $group: {
+                                        _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                                        count: { $sum: 1 }
+                                    }
+                                }
+                            ],
+                            copyGrowth: [
+                                {
+                                    $group: {
+                                        _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                                        copies: { $sum: { $ifNull: ["$copyCount", 0] } }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]).toArray();
+
+                const timelineMap = {};
+                growthData?.promptGrowth?.forEach(item => {
+                    if (item._id) timelineMap[item._id] = { date: item._id, prompts: item.count, copies: 0 };
+                });
+                growthData?.copyGrowth?.forEach(item => {
+                    if (item._id) {
+                        if (!timelineMap[item._id]) timelineMap[item._id] = { date: item._id, prompts: 0, copies: item.copies };
+                        else timelineMap[item._id].copies = item.copies;
+                    }
+                });
+
+                const chartData = Object.values(timelineMap).sort((a, b) => a.date.localeCompare(b.date));
+
+                res.status(200).send({
+                    success: true,
+                    summary: { totalPrompts, totalCopies, totalBookmarks },
+                    summaryBars, // This feeds our new 5-bar structure
+                    chartData
+                });
+
+            } catch (error) {
+                console.error("Error generating creator metrics:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
 
 
         await client.db("admin").command({ ping: 1 });
