@@ -711,6 +711,81 @@ async function run() {
             res.send(updateResult);
         })
 
+
+        // USER STATISTICS
+        app.get('/api/user/analytics', verifyToken, async (req, res) => {
+            try {
+                const userId = req.user?.id || req.user?._id;
+
+                if (!userId) {
+                    return res.status(400).send({ success: false, message: "User session context missing." });
+                }
+
+                const myReviews = await reviewCollection.find({ reviewerId: userId }).toArray();
+                const myBookmarks = await bookmarkCollection.find({ userId: userId }).toArray();
+
+
+                const interactedPromptIds = new Set([
+                    ...myReviews.map(r => r.promptId),
+                    ...myBookmarks.map(b => b.promptId)
+                ]);
+
+                const asUserBars = [
+                    { name: 'Interacted Prompts', value: interactedPromptIds.size, fillKey: 'url(#userBarInteracted)' },
+                    { name: 'Reviews I Gave', value: myReviews.length, fillKey: 'url(#userBarReviews)' },
+                    { name: 'Bookmarks I Placed', value: myBookmarks.length, fillKey: 'url(#userBarBookmarks)' }
+                ];
+
+
+                const creatorTotal = await promptCollection.countDocuments({ creatorId: userId });
+                const creatorApproved = await promptCollection.countDocuments({
+                    creatorId: userId,
+                    status: { $regex: /^approved$/i }
+                });
+                const creatorPending = await promptCollection.countDocuments({
+                    creatorId: userId,
+                    status: { $regex: /^pending$/i }
+                });
+                const creatorRejected = await promptCollection.countDocuments({
+                    creatorId: userId,
+                    status: { $regex: /^rejected$/i }
+                });
+
+
+                const copiesAggregated = await promptCollection.aggregate([
+                    { $match: { creatorId: userId } },
+                    { $group: { _id: null, total: { $sum: { $ifNull: ["$copyCount", 0] } } } }
+                ]).toArray();
+                const totalCopiesReceived = copiesAggregated[0]?.total || 0;
+
+
+                const totalBookmarksReceived = await bookmarkCollection.countDocuments({ creatorId: userId });
+
+
+                const totalReviewsReceived = await reviewCollection.countDocuments({ creatorId: userId });
+
+                const asCreatorBars = [
+                    { name: 'Total Prompts Created', value: creatorTotal, fillKey: 'url(#creatorBarTotal)' },
+                    { name: 'Approved Prompts', value: creatorApproved, fillKey: 'url(#creatorBarApproved)' },
+                    { name: 'Pending Prompts', value: creatorPending, fillKey: 'url(#creatorBarPending)' },
+                    { name: 'Rejected Prompts', value: creatorRejected, fillKey: 'url(#creatorBarRejected)' },
+                    { name: 'My Prompts Copied', value: totalCopiesReceived, fillKey: 'url(#creatorBarCopies)' },
+                    { name: 'My Prompts Bookmarked', value: totalBookmarksReceived, fillKey: 'url(#creatorBarBookmarks)' },
+                    { name: 'My Prompts Reviewed', value: totalReviewsReceived, fillKey: 'url(#creatorBarReviews)' }
+                ];
+
+                res.status(200).send({
+                    success: true,
+                    asUserBars,
+                    asCreatorBars
+                });
+
+            } catch (error) {
+                console.error("Error generating clean user analytics:", error);
+                res.status(500).send({ success: false, message: "Internal Server Error" });
+            }
+        });
+
         // CREATOR ANALYTICS
         app.get('/api/creator/analytics', verifyToken, creatorVerify, async (req, res) => {
             try {
@@ -720,7 +795,6 @@ async function run() {
                     return res.status(400).send({ success: false, message: "Invalid token payload" });
                 }
 
-                // 1. Fetch Raw Aggregate Values
                 const totalPrompts = await promptCollection.countDocuments({ creatorId });
                 const approvedPrompts = await promptCollection.countDocuments({ creatorId, status: "approved" });
                 const pendingPrompts = await promptCollection.countDocuments({ creatorId, status: "pending" });
@@ -732,7 +806,6 @@ async function run() {
                 ]).toArray();
                 const totalCopies = copiesResult[0]?.totalCopies || 0;
 
-                // 2. Format exact 5-Bar Summary Array for the chart
                 const summaryBars = [
                     { name: 'Total Prompts', value: totalPrompts, fillKey: 'url(#barTotalPromptsGrad)' },
                     { name: 'Approved Status', value: approvedPrompts, fillKey: 'url(#barApprovedGrad)' },
@@ -741,7 +814,6 @@ async function run() {
                     { name: 'Total Bookmarks', value: totalBookmarks, fillKey: 'url(#barBookmarksGrad)' }
                 ];
 
-                // 3. Growth Timeline Data (Remains intact per your requirement)
                 const [growthData] = await promptCollection.aggregate([
                     { $match: { creatorId } },
                     {
@@ -782,7 +854,7 @@ async function run() {
                 res.status(200).send({
                     success: true,
                     summary: { totalPrompts, totalCopies, totalBookmarks },
-                    summaryBars, // This feeds our new 5-bar structure
+                    summaryBars,
                     chartData
                 });
 
