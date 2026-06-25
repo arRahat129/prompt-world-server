@@ -637,7 +637,7 @@ app.get('/api/reviews/recent', async (req, res) => {
 
 
 
-app.post('/api/reviews', verifyToken, userVerify, proUserVerify, async (req, res) => {
+app.post('/api/reviews', verifyToken, userVerify, async (req, res) => {
     try {
         const reviewData = req.body;
 
