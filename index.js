@@ -230,6 +230,103 @@ app.get('/api/prompts/:id', verifyToken, async (req, res) => {
     res.send(result);
 })
 
+// For the leaderboard
+app.get('/api/creators/leaderboard', async (req, res) => {
+    try {
+        const leaderboard = await userCollection.aggregate([
+            {
+                $match: {
+                    role: { $ne: "admin" }
+                }
+            },
+            {
+                $lookup: {
+                    from: "prompts",
+                    let: { userStrId: { $toString: "$_id" } },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $eq: ["$creatorId", "$$userStrId"]
+                                }
+                            }
+                        }
+                    ],
+                    as: "userPrompts"
+                }
+            },
+            {
+                $addFields: {
+                    totalPrompts: { $size: "$userPrompts" }
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    name: 1,
+                    image: 1,
+                    totalPrompts: 1
+                }
+            },
+            {
+                $sort: { totalPrompts: -1 }
+            },
+            {
+                $limit: 10
+            }
+        ]).toArray();
+
+        res.status(200).send({
+            success: true,
+            data: leaderboard
+        });
+
+    } catch (error) {
+        console.error("Leaderboard Processing Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+app.get('/api/platform-stats', async (req, res) => {
+    try {
+        const statsAggregation = await promptCollection.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    totalPrompts: { $sum: 1 },
+                    totalCopies: { $sum: "$copyCount" },
+                    uniqueTools: { $addToSet: "$aiTool" },
+                    uniqueCategories: { $addToSet: "$category" }
+                }
+            },
+            {
+                $project: {
+                    _id: 0,
+                    totalPrompts: 1,
+                    totalGenerations: "$totalCopies",
+                    totalToolsCount: { $size: "$uniqueTools" },
+                    totalCategoriesCount: { $size: "$uniqueCategories" }
+                }
+            }
+        ]).toArray();
+
+        const dynamicStats = statsAggregation[0] || {
+            totalPrompts: 0,
+            totalGenerations: 0,
+            totalToolsCount: 0,
+            totalCategoriesCount: 0
+        };
+
+        res.status(200).send({
+            success: true,
+            data: dynamicStats
+        });
+    } catch (error) {
+        console.error("Error generating dynamic platform statistics:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
 app.post('/api/prompts', verifyToken, appUsersVerify, async (req, res) => {
     const prompt = req.body;
     const newPrompt = {
@@ -305,6 +402,27 @@ app.post('/api/prompts/:id/reject', verifyToken, adminVerify, async (req, res) =
         res.status(200).send({ success: true, message: "Prompt rejected. Metadata records pushed to rejection logs." });
     } catch (error) {
         console.error("Rejection Lifecycle Processing Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+
+// Featured
+app.get('/api/featured-prompts', async (req, res) => {
+    try {
+        const result = await featuredCollection
+            .find()
+            .sort({ featuredAt: -1 })
+            .limit(6)
+            .toArray();
+
+        res.status(200).send({
+            success: true,
+            count: result.length,
+            data: result
+        });
+    } catch (error) {
+        console.error("Error retrieving featured prompts:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
@@ -449,6 +567,36 @@ app.get('/api/reviews/user/:reviewerId', verifyToken, userVerify, async (req, re
         });
     } catch (error) {
         console.error("Error retrieving user-specific reviews:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+// For home page
+app.get('/api/reviews/recent', async (req, res) => {
+    try {
+        const recentReviews = await reviewCollection
+            .find({})
+            .sort({ createdAt: -1 })
+            .limit(6)
+            .project({
+                _id: 1,
+                promptName: 1,
+                promptDescription: 1,
+                reviewerName: 1,
+                reviewerImage: 1,
+                comment: 1,
+                rating: 1,
+                createdAt: 1
+            })
+            .toArray();
+
+        res.status(200).send({
+            success: true,
+            count: recentReviews.length,
+            data: recentReviews
+        });
+    } catch (error) {
+        console.error("Error retrieving recent reviews showcase data:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
