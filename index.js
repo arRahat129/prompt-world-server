@@ -888,21 +888,38 @@ app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
             email: data.email,
             createdAt: new Date()
         };
-        const result = await paymentCollection.insertOne(payInfo);
-
-        const { ObjectId } = require('mongodb');
+        const paymentResult = await paymentCollection.insertOne(payInfo);
+        
+        if (!ObjectId.isValid(data.userId)) {
+            return res.status(400).send({ success: false, message: "Invalid User ID structure configuration." });
+        }
+        
         const filter = { _id: new ObjectId(data.userId) };
         const updateDocument = {
             $set: {
-                plan: data.planId
+                plan: data.planId,
+                updatedAt: new Date()
             }
         };
 
         const updateResult = await userCollection.updateOne(filter, updateDocument);
-        res.status(200).send({ success: true, message: "Payment processed successfully", updateResult });
+        
+        if (updateResult.matchedCount === 0) {
+            return res.status(404).send({ 
+                success: false, 
+                message: "Payment logged, but corresponding user record could not be found to upgrade plans." 
+            });
+        }
+
+        res.status(200).send({ 
+            success: true, 
+            message: "Payment processed and tier privileges synchronized successfully", 
+            paymentId: paymentResult.insertedId,
+            updateResult 
+        });
 
     } catch (error) {
-        console.error("Payment ID validation breakdown:", error);
+        console.error("Payment registration operation failure:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
