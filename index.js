@@ -134,6 +134,7 @@ const planCollection = database.collection("plans");
 const paymentCollection = database.collection("payments");
 const rejectionCollection = database.collection("rejections");
 const featuredCollection = database.collection("featured_prompts");
+const reportCollection = database.collection("reports");
 
 
 // USER RELATED API'S
@@ -902,6 +903,73 @@ app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
 
     } catch (error) {
         console.error("Payment ID validation breakdown:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+
+// REPORTS RELATED API
+app.post('/api/reports', verifyToken, async (req, res) => {
+    try {
+        const { promptId, reason, reportType } = req.body;
+
+        if (!promptId || !reason || !reportType) {
+            return res.status(400).send({
+                success: false,
+                message: "Missing required parameters: promptId, reason, or reportType."
+            });
+        }
+
+        const promptQuery = { _id: new ObjectId(promptId) };
+        const promptData = await promptCollection.findOne(promptQuery);
+
+        if (!promptData) {
+            return res.status(404).send({ success: false, message: "Target prompt asset not found." });
+        }
+
+        const reporterId = req.user?.id || req.user?._id;
+        const reporterName = req.user?.name || "Anonymous User";
+        const reporterEmail = req.user?.email || "";
+        const reporterImage = req.user?.image || "";
+
+        if (!reporterId) {
+            return res.status(401).send({ success: false, message: "User session context missing or invalid." });
+        }
+
+        const newReport = {
+            reason: reason.trim(),
+            reportType: reportType,
+
+            promptId: promptId,
+            promptTitle: promptData.title,
+            promptCategory: promptData.category,
+            promptAiTool: promptData.aiTool,
+            promptThumbnail: promptData.thumbnail,
+            promptDescription: promptData.description,
+
+            creatorId: promptData.creatorId,
+            creatorEmail: promptData.creatorEmail,
+            creatorName: promptData.creatorName,
+            creatorImage: promptData.creatorImage,
+
+            reporterId,
+            reporterName,
+            reporterEmail,
+            reporterImage,
+
+            reportedAt: new Date()
+        };
+
+        const result = await reportCollection.insertOne(newReport);
+
+        res.status(201).send({
+            success: true,
+            insertedId: result.insertedId,
+            message: "Report logged successfully. Platform administrators will review it shortly."
+        });
+
+    } catch (error) {
+        console.error("Report Lifecyle Logging Failure:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
