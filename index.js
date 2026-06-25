@@ -138,9 +138,30 @@ const featuredCollection = database.collection("featured_prompts");
 
 // USER RELATED API'S
 app.get('/api/user', verifyToken, adminVerify, async (req, res) => {
-    const result = await userCollection.find().toArray();
-    res.send(result);
-})
+    try {
+        const query = {};
+
+        if (req.query.page) {
+            const page = parseInt(req.query.page) || 1;
+            const perPage = parseInt(req.query.perPage) || 10;
+            const skipItems = (page - 1) * perPage;
+
+            const total = await userCollection.countDocuments(query);
+            const users = await userCollection.find(query)
+                .skip(skipItems)
+                .limit(perPage)
+                .toArray();
+
+            return res.send({ total, users });
+        }
+
+        const result = await userCollection.find(query).toArray();
+        res.send(result);
+    } catch (error) {
+        console.error("Failed to read user registry entries:", error);
+        res.status(500).send({ message: "Internal Server Execution Fault" });
+    }
+});
 
 app.patch('/api/user/:id/role', verifyToken, adminVerify, async (req, res) => {
     try {
@@ -214,6 +235,18 @@ app.get('/api/prompts', async (req, res) => {
 
     if (req.query.difficulty) {
         query.difficulty = req.query.difficulty;
+    }
+
+    if (req.query.page) {
+        const page = parseInt(req.query.page) || 1;
+        const perPage = parseInt(req.query.perPage) || 12;
+        const skipItems = (page - 1) * perPage;
+
+        const total = await promptCollection.countDocuments(query);
+        const cursor = promptCollection.find(query).skip(skipItems).limit(perPage);
+        const prompts = await cursor.toArray();
+
+        return res.send({ total, prompts });
     }
 
     const cursor = promptCollection.find(query);
