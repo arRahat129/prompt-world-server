@@ -889,11 +889,11 @@ app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
             createdAt: new Date()
         };
         const paymentResult = await paymentCollection.insertOne(payInfo);
-        
+
         if (!ObjectId.isValid(data.userId)) {
             return res.status(400).send({ success: false, message: "Invalid User ID structure configuration." });
         }
-        
+
         const filter = { _id: new ObjectId(data.userId) };
         const updateDocument = {
             $set: {
@@ -903,19 +903,19 @@ app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
         };
 
         const updateResult = await userCollection.updateOne(filter, updateDocument);
-        
+
         if (updateResult.matchedCount === 0) {
-            return res.status(404).send({ 
-                success: false, 
-                message: "Payment logged, but corresponding user record could not be found to upgrade plans." 
+            return res.status(404).send({
+                success: false,
+                message: "Payment logged, but corresponding user record could not be found to upgrade plans."
             });
         }
 
-        res.status(200).send({ 
-            success: true, 
-            message: "Payment processed and tier privileges synchronized successfully", 
+        res.status(200).send({
+            success: true,
+            message: "Payment processed and tier privileges synchronized successfully",
             paymentId: paymentResult.insertedId,
-            updateResult 
+            updateResult
         });
 
     } catch (error) {
@@ -926,6 +926,39 @@ app.post('/api/payments', verifyToken, appUsersVerify, async (req, res) => {
 
 
 // REPORTS RELATED API
+app.get('/api/reports', verifyToken, adminVerify, async (req, res) => {
+    try {
+        const query = {};
+
+        if (req.query.targetType) {
+            query.targetType = req.query.targetType;
+        }
+
+        if (req.query.page) {
+            const page = parseInt(req.query.page) || 1;
+            const perPage = parseInt(req.query.perPage) || 10;
+            const skipItems = (page - 1) * perPage;
+
+            const total = await reportCollection.countDocuments(query);
+            const reports = await reportCollection.find(query)
+                .sort({ createdAt: -1 }) // Newest reports first
+                .skip(skipItems)
+                .limit(perPage)
+                .toArray();
+
+            return res.status(200).send({ total, reports });
+        }
+
+        // Default: Return all records if pagination isn't active
+        const result = await reportCollection.find(query).sort({ createdAt: -1 }).toArray();
+        res.status(200).send(result);
+    } catch (error) {
+        console.error("Failed to read platform system reporting logs:", error);
+        res.status(500).send({ success: false, message: "Internal Server Execution Fault" });
+    }
+});
+
+
 app.post('/api/reports', verifyToken, async (req, res) => {
     try {
         const { promptId, reason, reportType } = req.body;
