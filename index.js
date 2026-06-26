@@ -210,6 +210,8 @@ app.delete('/api/user/:id', verifyToken, adminVerify, async (req, res) => {
 
 app.get('/api/prompts', async (req, res) => {
     const query = {};
+    const sort = {};
+
     if (req.query.creatorId) {
         query.creatorId = req.query.creatorId;
     }
@@ -238,19 +240,27 @@ app.get('/api/prompts', async (req, res) => {
         query.difficulty = req.query.difficulty;
     }
 
+    if (req.query.sortBy) {
+        const sortBy = req.query.sortBy;
+        const order = req.query.order === 'desc' ? -1 : 1;
+        sort[sortBy] = order;
+    } else {
+        sort.createdAt = -1;
+    }
+
     if (req.query.page) {
         const page = parseInt(req.query.page) || 1;
         const perPage = parseInt(req.query.perPage) || 12;
         const skipItems = (page - 1) * perPage;
 
         const total = await promptCollection.countDocuments(query);
-        const cursor = promptCollection.find(query).skip(skipItems).limit(perPage);
+        const cursor = promptCollection.find(query).sort(sort).skip(skipItems).limit(perPage);
         const prompts = await cursor.toArray();
 
         return res.send({ total, prompts });
     }
 
-    const cursor = promptCollection.find(query);
+    const cursor = promptCollection.find(query).sort(sort).collation({ locale: 'en', strength: 2 });
     const result = await cursor.toArray();
     res.send(result);
 })
