@@ -615,6 +615,46 @@ app.patch('/api/prompts/:id/copy', verifyToken, async (req, res) => {
     }
 });
 
+app.delete('/api/prompts/:id', verifyToken, appUsersVerify, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const queryFilter = { _id: new ObjectId(id) };
+
+        const existingPrompt = await promptCollection.findOne(queryFilter);
+        if (!existingPrompt) {
+            return res.status(404).send({ success: false, message: "Prompt asset not found." });
+        }
+
+        if (existingPrompt.creatorId !== req.user?.id) {
+            return res.status(403).send({
+                success: false,
+                message: "Forbidden: You are not authorized to delete this prompt matrix."
+            });
+        }
+
+        const mainDeleteResult = await promptCollection.deleteOne(queryFilter);
+
+        if (mainDeleteResult.deletedCount === 0) {
+            return res.status(500).send({ success: false, message: "Failed to erase primary prompt asset." });
+        }
+
+        await featuredCollection.deleteOne({ promptId: id });
+        await reviewCollection.deleteMany({ promptId: id });
+        await bookmarkCollection.deleteMany({ promptId: id });
+        await rejectionCollection.deleteOne({ promptId: id });
+        await reportCollection.deleteMany({ promptId: id });
+
+        res.status(200).send({
+            success: true,
+            message: "Prompt matrix and all its associated cross-collection assets purged successfully."
+        });
+
+    } catch (error) {
+        console.error("Prompt Cascade Elimination Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
 app.delete('/api/prompts/:id', verifyToken, adminVerify, async (req, res) => {
     try {
         const id = req.params.id;
