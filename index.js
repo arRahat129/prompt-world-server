@@ -208,6 +208,7 @@ app.delete('/api/user/:id', verifyToken, adminVerify, async (req, res) => {
     }
 });
 
+// PROMPTS
 app.get('/api/prompts', async (req, res) => {
     const query = {};
     const sort = {};
@@ -380,6 +381,78 @@ app.post('/api/prompts', verifyToken, appUsersVerify, async (req, res) => {
     const result = await promptCollection.insertOne(newPrompt);
     res.send(result);
 })
+
+
+app.patch('/api/prompts/:id', verifyToken, appUsersVerify, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const queryFilter = { _id: new ObjectId(id) };
+
+        const existingPrompt = await promptCollection.findOne(queryFilter);
+        if (!existingPrompt) {
+            return res.status(404).send({ success: false, message: "Prompt asset not found." });
+        }
+
+        if (existingPrompt.creatorId !== req.user?.id) {
+            return res.status(403).send({
+                success: false,
+                message: "Forbidden: You are not authorized to modify this prompt matrix."
+            });
+        }
+
+        const {
+            title,
+            category,
+            aiTool,
+            tags,
+            description,
+            content,
+            difficulty,
+            visibility,
+            thumbnail
+        } = req.body;
+
+        const updatePayload = {};
+
+        if (title !== undefined) updatePayload.title = title;
+        if (category !== undefined) updatePayload.category = category;
+        if (aiTool !== undefined) updatePayload.aiTool = aiTool;
+        if (tags !== undefined) updatePayload.tags = tags;
+        if (description !== undefined) updatePayload.description = description;
+        if (content !== undefined) updatePayload.content = content;
+        if (difficulty !== undefined) updatePayload.difficulty = difficulty;
+        if (visibility !== undefined) updatePayload.visibility = visibility;
+        if (thumbnail !== undefined) updatePayload.thumbnail = thumbnail;
+
+        if (Object.keys(updatePayload).length === 0) {
+            return res.status(400).send({ success: false, message: "No updatable properties were provided." });
+        }
+
+        updatePayload.status = "pending";
+        updatePayload.updatedAt = new Date();
+
+        const result = await promptCollection.updateOne(queryFilter, {
+            $set: updatePayload
+        });
+
+        if (result.modifiedCount === 0) {
+            return res.status(200).send({ success: true, message: "No data changed; document remains identical." });
+        }
+
+        await rejectionCollection.deleteOne({ promptId: id });
+
+        res.status(200).send({
+            success: true,
+            message: "Prompt asset updated successfully and pushed back to the review queue.",
+            modifiedCount: result.modifiedCount
+        });
+
+    } catch (error) {
+        console.error("Prompt Patch Update Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
 
 app.patch('/api/prompts/:id/approve', verifyToken, adminVerify, async (req, res) => {
     try {
