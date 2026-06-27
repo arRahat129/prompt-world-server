@@ -31,7 +31,7 @@ const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks
 
 // VARIFICATION PROCESS
 const verifyToken = async (req, res, next) => {
-    console.log('headers', req.headers);
+    // console.log('headers', req.headers);
     const authHeader = req.headers?.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer")) {
@@ -39,7 +39,7 @@ const verifyToken = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
-    console.log(token);
+    // console.log(token);
 
     if (!token) {
         return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
@@ -47,19 +47,19 @@ const verifyToken = async (req, res, next) => {
 
     try {
         const { payload } = await jwtVerify(token, JWKS);
-        console.log('payload from verify token', payload);
+        // console.log('payload from verify token', payload);
         req.user = payload;
         next();
     }
     catch (error) {
-        console.log(error);
+        // console.log(error);
         return res.status(401).send({ message: 'UNAUTHORIZED ACCESS' });
     }
 }
 
 const adminVerify = async (req, res, next) => {
     const user = req.user;
-    console.log(user);
+    // console.log(user);
 
     if (user?.role !== 'admin') {
         return res.status(403).json({ success: false, message: "FORBIDDEN: Administrative privileges required." });
@@ -122,7 +122,7 @@ const proCreatorVerify = async (req, res, next) => {
 //         await client.connect();
 
 client.connect(() => {
-    console.log('connecting to MOngo db');
+    // console.log('connecting to MOngo db');
 }).catch(console.dir)
 
 const database = client.db("prompt_world_db");
@@ -525,7 +525,7 @@ app.post('/api/prompts/:id/reject', verifyToken, adminVerify, async (req, res) =
 
 
 // Featured
-app.get('/api/featured-prompts', async (req, res) => {
+app.get('/api/featured-prompts',verifyToken, async (req, res) => {
     try {
         const result = await featuredCollection
             .find()
@@ -862,7 +862,7 @@ app.post('/api/reviews', verifyToken, userVerify, async (req, res) => {
 app.get('/api/bookmarks', verifyToken, async (req, res) => {
     try {
         const { userId } = req.query;
-        console.log(userId);
+        // console.log(userId);
 
         if (!userId) {
             return res.status(400).send({
@@ -872,11 +872,11 @@ app.get('/api/bookmarks', verifyToken, async (req, res) => {
         }
 
         const bookmarks = await bookmarkCollection.find({ userId }).sort({ createdAt: -1 }).toArray();
-        console.log(bookmarks);
+        // console.log(bookmarks);
         res.status(200).send(bookmarks);
     }
     catch (error) {
-        console.log("Error retrieving user bookmarks list layout:", error);
+        // console.log("Error retrieving user bookmarks list layout:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
@@ -1435,7 +1435,7 @@ app.get('/api/admin/analytics', verifyToken, adminVerify, async (req, res) => {
 
 // Send a ping to confirm a successful connection
 // await client.db("admin").command({ ping: 1 });
-//         console.log("Pinged your deployment. You successfully connected to MongoDB!");
+//         // console.log("Pinged your deployment. You successfully connected to MongoDB!");
 //     } finally {
 //         // Ensures that the client will close when you finish/error
 //         // await client.close();
@@ -1445,7 +1445,7 @@ app.get('/api/admin/analytics', verifyToken, adminVerify, async (req, res) => {
 
 
 app.listen(port, () => {
-    console.log(`Example app listening on port ${port}`)
+    // console.log(`Example app listening on port ${port}`)
 })
 
 module.exports = app;
