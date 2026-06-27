@@ -135,6 +135,7 @@ const paymentCollection = database.collection("payments");
 const rejectionCollection = database.collection("rejections");
 const featuredCollection = database.collection("featured_prompts");
 const reportCollection = database.collection("reports");
+const feedbackCollection = database.collection("feedbacks");
 
 
 // USER RELATED API'S
@@ -525,7 +526,7 @@ app.post('/api/prompts/:id/reject', verifyToken, adminVerify, async (req, res) =
 
 
 // Featured
-app.get('/api/featured-prompts',verifyToken, async (req, res) => {
+app.get('/api/featured-prompts', verifyToken, async (req, res) => {
     try {
         const result = await featuredCollection
             .find()
@@ -1143,6 +1144,101 @@ app.post('/api/reports', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error("Report Lifecyle Logging Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+app.delete('/api/reports/:id', verifyToken, adminVerify, async (req, res) => {
+    try {
+        const reportId = req.params.id;
+
+        // 1. Validate that the ID is a valid MongoDB ObjectId string
+        if (!ObjectId.isValid(reportId)) {
+            return res.status(400).send({
+                success: false,
+                message: "Invalid report ID format."
+            });
+        }
+
+        const query = { _id: new ObjectId(reportId) };
+
+        // 2. Perform the deletion
+        const result = await reportCollection.deleteOne(query);
+
+        // 3. Check if a document was actually deleted
+        if (result.deletedCount === 0) {
+            return res.status(404).send({
+                success: false,
+                message: "Report not found or already deleted."
+            });
+        }
+
+        // 4. Return success response
+        res.status(200).send({
+            success: true,
+            message: "Report successfully removed from the system."
+        });
+
+    } catch (error) {
+        console.error("Failed to delete report log:", error);
+        res.status(500).send({
+            success: false,
+            message: "Internal Server Execution Fault during deletion."
+        });
+    }
+});
+
+
+// FEEDBACK RELATED API
+app.post('/api/feedback', verifyToken, adminVerify, async (req, res) => {
+    try {
+        const { reportId, message } = req.body;
+
+        if (!reportId || !message || !message.trim()) {
+            return res.status(400).send({
+                success: false,
+                message: "Missing required parameters: reportId or admin message description."
+            });
+        }
+
+        const reportQuery = { _id: new ObjectId(reportId) };
+        const reportData = await reportCollection.findOne(reportQuery);
+
+        if (!reportData) {
+            return res.status(404).send({
+                success: false,
+                message: "Source report asset context could not be located."
+            });
+        }
+
+        const newFeedback = {
+            reportType: reportData.reportType,
+            promptId: reportData.promptId,
+            promptTitle: reportData.promptTitle,
+            promptCategory: reportData.promptCategory,
+            promptAiTool: reportData.promptAiTool,
+            promptThumbnail: reportData.promptThumbnail,
+            promptDescription: reportData.promptDescription,
+
+            creatorId: reportData.creatorId,
+            creatorEmail: reportData.creatorEmail,
+            creatorName: reportData.creatorName,
+            creatorImage: reportData.creatorImage,
+
+            message: message.trim(),
+            feedbackCreatedAt: new Date()
+        };
+
+        const result = await feedbackCollection.insertOne(newFeedback);
+
+        res.status(201).send({
+            success: true,
+            insertedId: result.insertedId,
+            message: "Feedback notice issued and successfully dispatched to the content creator."
+        });
+
+    } catch (error) {
+        console.error("Feedback Generation Pipeline Failure:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
