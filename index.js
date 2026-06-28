@@ -526,7 +526,7 @@ app.post('/api/prompts/:id/reject', verifyToken, adminVerify, async (req, res) =
 
 
 // Featured
-app.get('/api/featured-prompts', verifyToken, async (req, res) => {
+app.get('/api/featured-prompts', async (req, res) => {
     try {
         const result = await featuredCollection
             .find()
@@ -1190,6 +1190,61 @@ app.delete('/api/reports/:id', verifyToken, adminVerify, async (req, res) => {
 
 
 // FEEDBACK RELATED API
+app.get('/api/feedback/creator/:creatorId', verifyToken, async (req, res) => {
+    try {
+        const { creatorId } = req.params;
+
+        if (!creatorId) {
+            return res.status(400).send({
+                success: false,
+                message: "Missing required query parameter: creatorId."
+            });
+        }
+
+        const query = { creatorId: creatorId };
+
+        const feedbackList = await feedbackCollection
+            .find(query)
+            .sort({ feedbackCreatedAt: -1 })
+            .toArray();
+
+        const enhancedFeedbackList = await Promise.all(
+            feedbackList.map(async (feedback) => {
+                let promptDetails = null;
+
+                if (feedback.promptId) {
+                    try {
+                        promptDetails = await promptCollection.findOne({
+                            _id: new ObjectId(feedback.promptId)
+                        });
+                    } catch (idError) {
+                        console.error(`Invalid promptId format: ${feedback.promptId}`, idError);
+                    }
+                }
+
+                return {
+                    ...feedback,
+                    prompt: promptDetails
+                };
+            })
+        );
+
+        res.status(200).send({
+            success: true,
+            count: enhancedFeedbackList.length,
+            feedback: enhancedFeedbackList
+        });
+
+    } catch (error) {
+        console.error("Failed to retrieve creator feedback notices:", error);
+        res.status(500).send({
+            success: false,
+            message: "Internal Server Error"
+        });
+    }
+});
+
+
 app.post('/api/feedback', verifyToken, adminVerify, async (req, res) => {
     try {
         const { reportId, message } = req.body;
