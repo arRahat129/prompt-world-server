@@ -138,6 +138,295 @@ const reportCollection = database.collection("reports");
 const feedbackCollection = database.collection("feedbacks");
 
 
+
+
+
+// USER STATISTICS
+app.get('/api/user/analytics', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?._id;
+
+        if (!userId) {
+            return res.status(400).send({ success: false, message: "User session context missing." });
+        }
+
+        const myReviews = await reviewCollection.find({ reviewerId: userId }).toArray();
+        const myBookmarks = await bookmarkCollection.find({ userId: userId }).toArray();
+
+
+        const interactedPromptIds = new Set([
+            ...myReviews.map(r => r.promptId),
+            ...myBookmarks.map(b => b.promptId)
+        ]);
+
+        const asUserBars = [
+            { name: 'Interacted Prompts', value: interactedPromptIds.size, fillKey: 'url(#userBarInteracted)' },
+            { name: 'Reviews I Gave', value: myReviews.length, fillKey: 'url(#userBarReviews)' },
+            { name: 'Bookmarks I Placed', value: myBookmarks.length, fillKey: 'url(#userBarBookmarks)' }
+        ];
+
+
+        const creatorTotal = await promptCollection.countDocuments({ creatorId: userId });
+        const creatorApproved = await promptCollection.countDocuments({
+            creatorId: userId,
+            status: { $regex: /^approved$/i }
+        });
+        const creatorPending = await promptCollection.countDocuments({
+            creatorId: userId,
+            status: { $regex: /^pending$/i }
+        });
+        const creatorRejected = await promptCollection.countDocuments({
+            creatorId: userId,
+            status: { $regex: /^rejected$/i }
+        });
+
+
+        const copiesAggregated = await promptCollection.aggregate([
+            { $match: { creatorId: userId } },
+            { $group: { _id: null, total: { $sum: { $ifNull: ["$copyCount", 0] } } } }
+        ]).toArray();
+        const totalCopiesReceived = copiesAggregated[0]?.total || 0;
+
+
+        const totalBookmarksReceived = await bookmarkCollection.countDocuments({ creatorId: userId });
+
+
+        const totalReviewsReceived = await reviewCollection.countDocuments({ creatorId: userId });
+
+        const asCreatorBars = [
+            { name: 'Total Prompts Created', value: creatorTotal, fillKey: 'url(#creatorBarTotal)' },
+            { name: 'Approved Prompts', value: creatorApproved, fillKey: 'url(#creatorBarApproved)' },
+            { name: 'Pending Prompts', value: creatorPending, fillKey: 'url(#creatorBarPending)' },
+            { name: 'Rejected Prompts', value: creatorRejected, fillKey: 'url(#creatorBarRejected)' },
+            { name: 'My Prompts Copied', value: totalCopiesReceived, fillKey: 'url(#creatorBarCopies)' },
+            { name: 'My Prompts Bookmarked', value: totalBookmarksReceived, fillKey: 'url(#creatorBarBookmarks)' },
+            { name: 'My Prompts Reviewed', value: totalReviewsReceived, fillKey: 'url(#creatorBarReviews)' }
+        ];
+
+        res.status(200).send({
+            success: true,
+            asUserBars,
+            asCreatorBars
+        });
+
+    } catch (error) {
+        console.error("Error generating clean user analytics:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+// CREATOR ANALYTICS
+app.get('/api/creator/analytics', verifyToken, creatorVerify, async (req, res) => {
+    try {
+        const creatorId = req.user?.id || req.user?._id;
+
+        if (!creatorId) {
+            return res.status(400).send({ success: false, message: "Invalid token payload" });
+        }
+
+        const totalPrompts = await promptCollection.countDocuments({ creatorId });
+        const approvedPrompts = await promptCollection.countDocuments({ creatorId, status: "approved" });
+        const pendingPrompts = await promptCollection.countDocuments({ creatorId, status: "pending" });
+        const totalBookmarks = await bookmarkCollection.countDocuments({ creatorId });
+
+        const copiesResult = await promptCollection.aggregate([
+            { $match: { creatorId } },
+            { $group: { _id: null, totalCopies: { $sum: { $ifNull: ["$copyCount", 0] } } } }
+        ]).toArray();
+        const totalCopies = copiesResult[0]?.totalCopies || 0;
+
+        const summaryBars = [
+            { name: 'Total Prompts', value: totalPrompts, fillKey: 'url(#barTotalPromptsGrad)' },
+            { name: 'Approved Status', value: approvedPrompts, fillKey: 'url(#barApprovedGrad)' },
+            { name: 'Pending Status', value: pendingPrompts, fillKey: 'url(#barPendingGrad)' },
+            { name: 'Total Copies', value: totalCopies, fillKey: 'url(#barCopiesGrad)' },
+            { name: 'Total Bookmarks', value: totalBookmarks, fillKey: 'url(#barBookmarksGrad)' }
+        ];
+
+        const [growthData] = await promptCollection.aggregate([
+            { $match: { creatorId } },
+            {
+                $facet: {
+                    promptGrowth: [
+                        {
+                            $group: {
+                                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                                count: { $sum: 1 }
+                            }
+                        }
+                    ],
+                    copyGrowth: [
+                        {
+                            $group: {
+                                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                                copies: { $sum: { $ifNull: ["$copyCount", 0] } }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]).toArray();
+
+        const timelineMap = {};
+        growthData?.promptGrowth?.forEach(item => {
+            if (item._id) timelineMap[item._id] = { date: item._id, prompts: item.count, copies: 0 };
+        });
+        growthData?.copyGrowth?.forEach(item => {
+            if (item._id) {
+                if (!timelineMap[item._id]) timelineMap[item._id] = { date: item._id, prompts: 0, copies: item.copies };
+                else timelineMap[item._id].copies = item.copies;
+            }
+        });
+
+        const chartData = Object.values(timelineMap).sort((a, b) => a.date.localeCompare(b.date));
+
+        res.status(200).send({
+            success: true,
+            summary: { totalPrompts, totalCopies, totalBookmarks },
+            summaryBars,
+            chartData
+        });
+
+    } catch (error) {
+        console.error("Error generating creator metrics:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+
+// ADMIN ANALYTICS & INSIGHTS
+app.get('/api/admin/analytics', verifyToken, adminVerify, async (req, res) => {
+    try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalReviews = await reviewCollection.countDocuments();
+
+        const promptStatusCounts = await promptCollection.aggregate([
+            {
+                $group: {
+                    _id: { $toLower: { $ifNull: ["$status", "pending"] } },
+                    count: { $sum: 1 }
+                }
+            }
+        ]).toArray();
+
+        const promptStatusMap = { approved: 0, pending: 0, rejected: 0 };
+        let totalPrompts = 0;
+        promptStatusCounts.forEach(item => {
+            if (item._id && item._id in promptStatusMap) {
+                promptStatusMap[item._id] = item.count;
+            }
+            totalPrompts += item.count;
+        });
+
+        const globalCopiesResult = await promptCollection.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: { $ifNull: ["$copyCount", 0] } }
+                }
+            }
+        ]).toArray();
+        const totalCopies = globalCopiesResult[0]?.total || 0;
+
+        const paymentsAggregation = await paymentCollection.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    totalCount: { $sum: 1 }
+                }
+            }
+        ]).toArray();
+
+        const totalPaymentsCount = paymentsAggregation[0]?.totalCount || 0;
+        const totalRevenue = totalPaymentsCount * 5;
+
+        const categoryDistribution = await promptCollection.aggregate([
+            { $group: { _id: "$category", value: { $sum: 1 } } },
+            { $project: { name: { $ifNull: ["$_id", "Uncategorized"] }, value: 1, _id: 0 } },
+            { $sort: { value: -1 } }
+        ]).toArray();
+
+        const aiToolDistribution = await promptCollection.aggregate([
+            { $group: { _id: "$aiTool", value: { $sum: 1 } } },
+            { $project: { name: { $ifNull: ["$_id", "Other"] }, value: 1, _id: 0 } },
+            { $sort: { value: -1 } }
+        ]).toArray();
+
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const rawUsers = await userCollection.find({ createdAt: { $exists: true } }, { projection: { createdAt: 1 } }).toArray();
+        const rawPrompts = await promptCollection.find({ createdAt: { $exists: true } }, { projection: { createdAt: 1 } }).toArray();
+        const rawPayments = await paymentCollection.find(
+            { createdAt: { $exists: true } },
+            { projection: { createdAt: 1 } }
+        ).toArray();
+
+        const timelineMap = {};
+
+        const parseDateKey = (dateVal) => {
+            if (!dateVal) return null;
+            if (dateVal instanceof Date) return dateVal.toISOString().split('T')[0];
+            if (typeof dateVal === 'string') return dateVal.split('T')[0];
+            return null;
+        };
+
+        rawUsers.forEach(u => {
+            const dateStr = parseDateKey(u.createdAt);
+            if (dateStr) {
+                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
+                timelineMap[dateStr].newUsers += 1;
+            }
+        });
+
+        rawPrompts.forEach(p => {
+            const dateStr = parseDateKey(p.createdAt);
+            if (dateStr) {
+                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
+                timelineMap[dateStr].newPrompts += 1;
+            }
+        });
+
+        rawPayments.forEach(pay => {
+            const dateStr = parseDateKey(pay.createdAt);
+            if (dateStr) {
+                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
+                timelineMap[dateStr].revenue += 5;
+            }
+        });
+
+        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+        const timelineChartData = Object.values(timelineMap)
+            .filter(item => item.date >= thirtyDaysAgoStr)
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+        res.status(200).send({
+            success: true,
+            summaryCards: {
+                totalUsers,
+                totalPrompts,
+                promptsApproved: promptStatusMap.approved,
+                promptsPending: promptStatusMap.pending,
+                promptsRejected: promptStatusMap.rejected,
+                totalReviews,
+                totalCopies,
+                totalPaymentsCount,
+                totalRevenue
+            },
+            charts: {
+                categoryDistribution,
+                aiToolDistribution,
+                timelineChartData
+            }
+        });
+
+    } catch (error) {
+        console.error("Critical System Admin Analytics Execution Failure:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+
 // USER RELATED API'S
 app.get('/api/user', verifyToken, adminVerify, async (req, res) => {
     try {
@@ -167,7 +456,8 @@ app.get('/api/user', verifyToken, adminVerify, async (req, res) => {
 
 app.get('/api/user/:id', verifyToken, async (req, res) => {
     try {
-        const userId = req.params.id;
+        const userId = req.params.id || req.params._id;
+        console.log(userId);
 
         if (!ObjectId.isValid(userId)) {
             return res.status(400).send({ message: "Invalid User ID format provided." });
@@ -1321,292 +1611,6 @@ app.post('/api/feedback', verifyToken, adminVerify, async (req, res) => {
 
     } catch (error) {
         console.error("Feedback Generation Pipeline Failure:", error);
-        res.status(500).send({ success: false, message: "Internal Server Error" });
-    }
-});
-
-
-// USER STATISTICS
-app.get('/api/user/analytics', verifyToken, async (req, res) => {
-    try {
-        const userId = req.user?.id || req.user?._id;
-
-        if (!userId) {
-            return res.status(400).send({ success: false, message: "User session context missing." });
-        }
-
-        const myReviews = await reviewCollection.find({ reviewerId: userId }).toArray();
-        const myBookmarks = await bookmarkCollection.find({ userId: userId }).toArray();
-
-
-        const interactedPromptIds = new Set([
-            ...myReviews.map(r => r.promptId),
-            ...myBookmarks.map(b => b.promptId)
-        ]);
-
-        const asUserBars = [
-            { name: 'Interacted Prompts', value: interactedPromptIds.size, fillKey: 'url(#userBarInteracted)' },
-            { name: 'Reviews I Gave', value: myReviews.length, fillKey: 'url(#userBarReviews)' },
-            { name: 'Bookmarks I Placed', value: myBookmarks.length, fillKey: 'url(#userBarBookmarks)' }
-        ];
-
-
-        const creatorTotal = await promptCollection.countDocuments({ creatorId: userId });
-        const creatorApproved = await promptCollection.countDocuments({
-            creatorId: userId,
-            status: { $regex: /^approved$/i }
-        });
-        const creatorPending = await promptCollection.countDocuments({
-            creatorId: userId,
-            status: { $regex: /^pending$/i }
-        });
-        const creatorRejected = await promptCollection.countDocuments({
-            creatorId: userId,
-            status: { $regex: /^rejected$/i }
-        });
-
-
-        const copiesAggregated = await promptCollection.aggregate([
-            { $match: { creatorId: userId } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ["$copyCount", 0] } } } }
-        ]).toArray();
-        const totalCopiesReceived = copiesAggregated[0]?.total || 0;
-
-
-        const totalBookmarksReceived = await bookmarkCollection.countDocuments({ creatorId: userId });
-
-
-        const totalReviewsReceived = await reviewCollection.countDocuments({ creatorId: userId });
-
-        const asCreatorBars = [
-            { name: 'Total Prompts Created', value: creatorTotal, fillKey: 'url(#creatorBarTotal)' },
-            { name: 'Approved Prompts', value: creatorApproved, fillKey: 'url(#creatorBarApproved)' },
-            { name: 'Pending Prompts', value: creatorPending, fillKey: 'url(#creatorBarPending)' },
-            { name: 'Rejected Prompts', value: creatorRejected, fillKey: 'url(#creatorBarRejected)' },
-            { name: 'My Prompts Copied', value: totalCopiesReceived, fillKey: 'url(#creatorBarCopies)' },
-            { name: 'My Prompts Bookmarked', value: totalBookmarksReceived, fillKey: 'url(#creatorBarBookmarks)' },
-            { name: 'My Prompts Reviewed', value: totalReviewsReceived, fillKey: 'url(#creatorBarReviews)' }
-        ];
-
-        res.status(200).send({
-            success: true,
-            asUserBars,
-            asCreatorBars
-        });
-
-    } catch (error) {
-        console.error("Error generating clean user analytics:", error);
-        res.status(500).send({ success: false, message: "Internal Server Error" });
-    }
-});
-
-// CREATOR ANALYTICS
-app.get('/api/creator/analytics', verifyToken, creatorVerify, async (req, res) => {
-    try {
-        const creatorId = req.user?.id || req.user?._id;
-
-        if (!creatorId) {
-            return res.status(400).send({ success: false, message: "Invalid token payload" });
-        }
-
-        const totalPrompts = await promptCollection.countDocuments({ creatorId });
-        const approvedPrompts = await promptCollection.countDocuments({ creatorId, status: "approved" });
-        const pendingPrompts = await promptCollection.countDocuments({ creatorId, status: "pending" });
-        const totalBookmarks = await bookmarkCollection.countDocuments({ creatorId });
-
-        const copiesResult = await promptCollection.aggregate([
-            { $match: { creatorId } },
-            { $group: { _id: null, totalCopies: { $sum: { $ifNull: ["$copyCount", 0] } } } }
-        ]).toArray();
-        const totalCopies = copiesResult[0]?.totalCopies || 0;
-
-        const summaryBars = [
-            { name: 'Total Prompts', value: totalPrompts, fillKey: 'url(#barTotalPromptsGrad)' },
-            { name: 'Approved Status', value: approvedPrompts, fillKey: 'url(#barApprovedGrad)' },
-            { name: 'Pending Status', value: pendingPrompts, fillKey: 'url(#barPendingGrad)' },
-            { name: 'Total Copies', value: totalCopies, fillKey: 'url(#barCopiesGrad)' },
-            { name: 'Total Bookmarks', value: totalBookmarks, fillKey: 'url(#barBookmarksGrad)' }
-        ];
-
-        const [growthData] = await promptCollection.aggregate([
-            { $match: { creatorId } },
-            {
-                $facet: {
-                    promptGrowth: [
-                        {
-                            $group: {
-                                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                                count: { $sum: 1 }
-                            }
-                        }
-                    ],
-                    copyGrowth: [
-                        {
-                            $group: {
-                                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                                copies: { $sum: { $ifNull: ["$copyCount", 0] } }
-                            }
-                        }
-                    ]
-                }
-            }
-        ]).toArray();
-
-        const timelineMap = {};
-        growthData?.promptGrowth?.forEach(item => {
-            if (item._id) timelineMap[item._id] = { date: item._id, prompts: item.count, copies: 0 };
-        });
-        growthData?.copyGrowth?.forEach(item => {
-            if (item._id) {
-                if (!timelineMap[item._id]) timelineMap[item._id] = { date: item._id, prompts: 0, copies: item.copies };
-                else timelineMap[item._id].copies = item.copies;
-            }
-        });
-
-        const chartData = Object.values(timelineMap).sort((a, b) => a.date.localeCompare(b.date));
-
-        res.status(200).send({
-            success: true,
-            summary: { totalPrompts, totalCopies, totalBookmarks },
-            summaryBars,
-            chartData
-        });
-
-    } catch (error) {
-        console.error("Error generating creator metrics:", error);
-        res.status(500).send({ success: false, message: "Internal Server Error" });
-    }
-});
-
-
-// ADMIN ANALYTICS & INSIGHTS
-app.get('/api/admin/analytics', verifyToken, adminVerify, async (req, res) => {
-    try {
-        const totalUsers = await userCollection.countDocuments();
-        const totalReviews = await reviewCollection.countDocuments();
-
-        const promptStatusCounts = await promptCollection.aggregate([
-            {
-                $group: {
-                    _id: { $toLower: { $ifNull: ["$status", "pending"] } },
-                    count: { $sum: 1 }
-                }
-            }
-        ]).toArray();
-
-        const promptStatusMap = { approved: 0, pending: 0, rejected: 0 };
-        let totalPrompts = 0;
-        promptStatusCounts.forEach(item => {
-            if (item._id && item._id in promptStatusMap) {
-                promptStatusMap[item._id] = item.count;
-            }
-            totalPrompts += item.count;
-        });
-
-        const globalCopiesResult = await promptCollection.aggregate([
-            {
-                $group: {
-                    _id: null,
-                    total: { $sum: { $ifNull: ["$copyCount", 0] } }
-                }
-            }
-        ]).toArray();
-        const totalCopies = globalCopiesResult[0]?.total || 0;
-
-        const paymentsAggregation = await paymentCollection.aggregate([
-            {
-                $group: {
-                    _id: null,
-                    totalCount: { $sum: 1 }
-                }
-            }
-        ]).toArray();
-
-        const totalPaymentsCount = paymentsAggregation[0]?.totalCount || 0;
-        const totalRevenue = totalPaymentsCount * 5;
-
-        const categoryDistribution = await promptCollection.aggregate([
-            { $group: { _id: "$category", value: { $sum: 1 } } },
-            { $project: { name: { $ifNull: ["$_id", "Uncategorized"] }, value: 1, _id: 0 } },
-            { $sort: { value: -1 } }
-        ]).toArray();
-
-        const aiToolDistribution = await promptCollection.aggregate([
-            { $group: { _id: "$aiTool", value: { $sum: 1 } } },
-            { $project: { name: { $ifNull: ["$_id", "Other"] }, value: 1, _id: 0 } },
-            { $sort: { value: -1 } }
-        ]).toArray();
-
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const rawUsers = await userCollection.find({ createdAt: { $exists: true } }, { projection: { createdAt: 1 } }).toArray();
-        const rawPrompts = await promptCollection.find({ createdAt: { $exists: true } }, { projection: { createdAt: 1 } }).toArray();
-        const rawPayments = await paymentCollection.find(
-            { createdAt: { $exists: true } },
-            { projection: { createdAt: 1 } }
-        ).toArray();
-
-        const timelineMap = {};
-
-        const parseDateKey = (dateVal) => {
-            if (!dateVal) return null;
-            if (dateVal instanceof Date) return dateVal.toISOString().split('T')[0];
-            if (typeof dateVal === 'string') return dateVal.split('T')[0];
-            return null;
-        };
-
-        rawUsers.forEach(u => {
-            const dateStr = parseDateKey(u.createdAt);
-            if (dateStr) {
-                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
-                timelineMap[dateStr].newUsers += 1;
-            }
-        });
-
-        rawPrompts.forEach(p => {
-            const dateStr = parseDateKey(p.createdAt);
-            if (dateStr) {
-                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
-                timelineMap[dateStr].newPrompts += 1;
-            }
-        });
-
-        rawPayments.forEach(pay => {
-            const dateStr = parseDateKey(pay.createdAt);
-            if (dateStr) {
-                if (!timelineMap[dateStr]) timelineMap[dateStr] = { date: dateStr, newUsers: 0, newPrompts: 0, revenue: 0 };
-                timelineMap[dateStr].revenue += 5;
-            }
-        });
-
-        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
-        const timelineChartData = Object.values(timelineMap)
-            .filter(item => item.date >= thirtyDaysAgoStr)
-            .sort((a, b) => a.date.localeCompare(b.date));
-
-        res.status(200).send({
-            success: true,
-            summaryCards: {
-                totalUsers,
-                totalPrompts,
-                promptsApproved: promptStatusMap.approved,
-                promptsPending: promptStatusMap.pending,
-                promptsRejected: promptStatusMap.rejected,
-                totalReviews,
-                totalCopies,
-                totalPaymentsCount,
-                totalRevenue
-            },
-            charts: {
-                categoryDistribution,
-                aiToolDistribution,
-                timelineChartData
-            }
-        });
-
-    } catch (error) {
-        console.error("Critical System Admin Analytics Execution Failure:", error);
         res.status(500).send({ success: false, message: "Internal Server Error" });
     }
 });
