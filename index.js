@@ -165,6 +165,33 @@ app.get('/api/user', verifyToken, adminVerify, async (req, res) => {
     }
 });
 
+app.get('/api/user/:id', verifyToken, async (req, res) => {
+    try {
+        const userId = req.params.id;
+
+        if (!ObjectId.isValid(userId)) {
+            return res.status(400).send({ message: "Invalid User ID format provided." });
+        }
+
+        const query = { _id: new ObjectId(userId) };
+        const user = await userCollection.findOne(query);
+
+        if (!user) {
+            return res.status(404).send({ message: "Requested user entry could not be found." });
+        }
+
+        if (user.password) {
+            delete user.password;
+        }
+
+        res.send(user);
+
+    } catch (error) {
+        console.error("Failed to read single user record from registry:", error);
+        res.status(500).send({ message: "Internal Server Execution Fault" });
+    }
+});
+
 app.patch('/api/user/:id/role', verifyToken, adminVerify, async (req, res) => {
     try {
         const id = req.params.id;
